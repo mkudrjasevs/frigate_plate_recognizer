@@ -22,7 +22,7 @@ config = None
 first_message = True
 _LOGGER = None
 
-VERSION = '1.8.14'
+VERSION = '2.0.0'
 
 CONFIG_PATH = '/config/config.yml'
 DB_PATH = '/config/frigate_plate_recogizer.db'
@@ -35,10 +35,10 @@ PLATE_RECOGIZER_BASE_URL = 'https://api.platerecognizer.com/v1/plate-reader'
 DEFAULT_OBJECTS = ['car', 'motorcycle', 'bus']
 CURRENT_EVENTS = {}
 
-
+# Connect to frigate/reviews
 def on_connect(mqtt_client, userdata, flags, rc):
     _LOGGER.info("MQTT Connected")
-    mqtt_client.subscribe(config['frigate']['main_topic'] + "/events")
+    mqtt_client.subscribe(config['frigate']['main_topic'] + "/reviews")
 
 def on_disconnect(mqtt_client, userdata, rc):
     if rc != 0:
@@ -53,59 +53,7 @@ def on_disconnect(mqtt_client, userdata, rc):
     else:
         _LOGGER.error("Expected disconnection")
 
-def set_sublabel(frigate_url, frigate_event_id, sublabel, score):
-    post_url = f"{frigate_url}/api/events/{frigate_event_id}/sub_label"
-    _LOGGER.debug(f'sublabel: {sublabel}')
-    _LOGGER.debug(f'sublabel url: {post_url}')
-
-    # frigate limits sublabels to 20 characters currently
-    if len(sublabel) > 20:
-        sublabel = sublabel[:20]
-
-    sublabel = str(sublabel).upper() # plates are always upper cased
-
-    # Submit the POST request with the JSON payload
-    payload = { "subLabel": sublabel }
-    headers = { "Content-Type": "application/json" }
-    response = requests.post(post_url, data=json.dumps(payload), headers=headers)
-
-    percent_score = "{:.1%}".format(score)
-
-    # Check for a successful response
-    if response.status_code == 200:
-        _LOGGER.info(f"Sublabel set successfully to: {sublabel} with {percent_score} confidence")
-    else:
-        _LOGGER.error(f"Failed to set sublabel. Status code: {response.status_code}")
-
-def code_project(image):
-    api_url = config['code_project'].get('api_url')
-
-    response = requests.post(
-        api_url,
-        files=dict(upload=image),
-    )
-    response = response.json()
-    _LOGGER.debug(f"response: {response}")
-
-    if response.get('predictions') is None:
-        _LOGGER.error(f"Failed to get plate number. Response: {response}")
-        return None, None, None, None
-
-    if len(response['predictions']) == 0:
-        _LOGGER.debug(f"No plates found")
-        return None, None, None, None
-
-    plate_number = response['predictions'][0].get('plate')
-    score = response['predictions'][0].get('confidence')
-    
-    watched_plate, watched_score, fuzzy_score = check_watched_plates(plate_number, response['predictions'])   
-    if fuzzy_score:
-        return plate_number, score, watched_plate, fuzzy_score
-    elif watched_plate: 
-        return plate_number, watched_score, watched_plate, None
-    else:
-        return plate_number, score, None, None
-
+############### PLATE RECOGNIZER UPLOAD ###############
 def plate_recognizer(image):
     api_url = config['plate_recognizer'].get('api_url') or PLATE_RECOGIZER_BASE_URL
     token = config['plate_recognizer']['token']
@@ -192,6 +140,8 @@ def check_watched_plates(plate_number, response):
     _LOGGER.debug("No matching Watched Plates found.")
     #No watched_plate matches found 
     return None, None, None
+
+################## PLATE RECOGNIZER UPLOAD/FUZZY CHECK COMPLETE #################
     
 def send_mqtt_message(plate_number, plate_score, frigate_event_id, after_data, formatted_start_time, watched_plate, fuzzy_score):
     if not config['frigate'].get('return_topic'):
@@ -300,24 +250,24 @@ def check_invalid_event(before_data, after_data):
 
     # Check if either both match (when both are defined) or at least one matches (when only one is defined)
     if not (matching_zone and matching_camera):
-        _LOGGER.debug(f"Skipping event: {after_data['id']} because it does not match the configured zones/cameras")
+        _LOGGER.debug(f"Skipping event: {after_data['data']['detections'][0]} because it does not match the configured zones/cameras")
         return True
 
     # check if it is a valid object
     valid_objects = config['frigate'].get('objects', DEFAULT_OBJECTS)
-    if(after_data['label'] not in valid_objects):
-        _LOGGER.debug(f"is not a correct label: {after_data['label']}")
+    if(after_data['data']['objects'][0] not in valid_objects):
+        _LOGGER.debug(f"is not a correct label: {after_data['data']['objects'][0]}")
         return True
 
-    # limit api calls to plate checker api by only checking the best score for an event
-    if(before_data['top_score'] == after_data['top_score'] and after_data['id'] in CURRENT_EVENTS) and not config['frigate'].get('frigate_plus', False):
-        _LOGGER.debug(f"duplicated snapshot from Frigate as top_score from before and after are the same: {after_data['top_score']} {after_data['id']}")
-        return True
-    return False
+#    # limit api calls to plate checker api by only checking the best score for an event
+#    if(before_data['top_score'] == after_data['top_score'] and after_data['data']['detections'][0] in CURRENT_EVENTS) and not config['frigate'].get('frigate_plus', False):
+#        _LOGGER.debug(f"duplicated snapshot from Frigate as top_score from before and after are the same: {after_data['top_score']} {after_data['data']['detections'][0]}")
+#        return True
+#    return False
 
 def get_snapshot(frigate_event_id, frigate_url, cropped):
     _LOGGER.debug(f"Getting snapshot for event: {frigate_event_id}, Crop: {cropped}")
-    snapshot_url = f"{frigate_url}/api/events/{frigate_event_id}/snapshot.jpg"
+    snapshot_url = f"{frigate_url}/api/events/{frigate_event_id}/thumbnail.jpg"
     _LOGGER.debug(f"event URL: {snapshot_url}")
 
     # get snapshot
@@ -393,8 +343,6 @@ def get_plate(snapshot):
 
     if config.get('plate_recognizer'):
         plate_number, plate_score , watched_plate, fuzzy_score = plate_recognizer(snapshot)
-    elif config.get('code_project'):
-        plate_number, plate_score, watched_plate, fuzzy_score = code_project(snapshot)
     else:
         _LOGGER.error("Plate Recognizer is not configured")
         return None, None, None, None
@@ -435,9 +383,10 @@ def on_message(client, userdata, message):
     type = payload_dict.get('type','')
     
     frigate_url = config['frigate']['frigate_url']
-    frigate_event_id = after_data['id']
+    frigate_event_id = after_data['data']['detections'][0]
+    frigate_review_id = after_data['id']
     
-    if type == 'end' and after_data['id'] in CURRENT_EVENTS:
+    if type == 'end' and after_data['data']['detections'][0] in CURRENT_EVENTS:
         _LOGGER.debug(f"CLEARING EVENT: {frigate_event_id} after {CURRENT_EVENTS[frigate_event_id]} calls to AI engine")
         if frigate_event_id in CURRENT_EVENTS:
             del CURRENT_EVENTS[frigate_event_id]
@@ -452,7 +401,7 @@ def on_message(client, userdata, message):
     if frigate_plus and not is_valid_license_plate(after_data):
         return
     
-    if not type == 'end' and not after_data['id'] in CURRENT_EVENTS:
+    if not type == 'end' and not after_data['data']['detections'][0] in CURRENT_EVENTS:
         CURRENT_EVENTS[frigate_event_id] =  0
         
     
@@ -478,7 +427,7 @@ def on_message(client, userdata, message):
             store_plate_in_db(watched_plate, plate_score, frigate_event_id, after_data, formatted_start_time)
         else:
             store_plate_in_db(plate_number, plate_score, frigate_event_id, after_data, formatted_start_time)
-        set_sublabel(frigate_url, frigate_event_id, watched_plate if watched_plate else plate_number, plate_score)
+#        set_sublabel(frigate_url, frigate_event_id, watched_plate if watched_plate else plate_number, plate_score)
 
         send_mqtt_message(plate_number, plate_score, frigate_event_id, after_data, formatted_start_time, watched_plate, fuzzy_score)
          
@@ -572,10 +521,6 @@ def main():
 
     if config.get('plate_recognizer'):
         _LOGGER.info(f"Using Plate Recognizer API")
-    else:
-        _LOGGER.info(f"Using CodeProject.AI API")
-
-
     run_mqtt_client()
 
 
