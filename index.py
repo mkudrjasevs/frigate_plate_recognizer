@@ -267,7 +267,7 @@ def check_invalid_event(before_data, after_data):
 
 def get_snapshot(frigate_event_id, frigate_url, cropped):
     _LOGGER.debug(f"Getting snapshot for event: {frigate_event_id}, Crop: {cropped}")
-    snapshot_url = f"{frigate_url}/api/events/{frigate_event_id}/thumbnail.jpg"
+    snapshot_url = f"{frigate_url}/api/events/{frigate_event_id}/snapshot.jpg"
     _LOGGER.debug(f"event URL: {snapshot_url}")
 
     # get snapshot
