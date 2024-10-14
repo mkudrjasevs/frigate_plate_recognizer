@@ -143,7 +143,7 @@ def check_watched_plates(plate_number, response):
 
 ################## PLATE RECOGNIZER UPLOAD/FUZZY CHECK COMPLETE #################
     
-def send_mqtt_message(plate_number, plate_score, frigate_event_id, after_data, formatted_start_time, watched_plate, fuzzy_score):
+def send_mqtt_message(plate_number, plate_score, frigate_event_id, frigate_review_id, formatted_start_time, watched_plate):
     if not config['frigate'].get('return_topic'):
         return
 
@@ -152,9 +152,8 @@ def send_mqtt_message(plate_number, plate_score, frigate_event_id, after_data, f
             'plate_number': str(watched_plate).upper(),
             'score': plate_score,
             'frigate_event_id': frigate_event_id,
-            'camera_name': after_data['camera'],
+            'frigate_review_id': frigate_review_id,
             'start_time': formatted_start_time,
-            'fuzzy_score': fuzzy_score,
             'original_plate': str(plate_number).upper()
         }
     else:
@@ -162,8 +161,8 @@ def send_mqtt_message(plate_number, plate_score, frigate_event_id, after_data, f
             'plate_number': str(plate_number).upper(),
             'score': plate_score,
             'frigate_event_id': frigate_event_id,
-            'camera_name': after_data['camera'],
-            'start_time': formatted_start_time
+            'frigate_review_id': frigate_review_id,
+            'start_time': formatted_start_time,
         }
 
     _LOGGER.debug(f"Sending MQTT message: {message}")
@@ -429,7 +428,7 @@ def on_message(client, userdata, message):
             store_plate_in_db(plate_number, plate_score, frigate_event_id, after_data, formatted_start_time)
 #        set_sublabel(frigate_url, frigate_event_id, watched_plate if watched_plate else plate_number, plate_score)
 
-        send_mqtt_message(plate_number, plate_score, frigate_event_id, after_data, formatted_start_time, watched_plate, fuzzy_score)
+        send_mqtt_message(plate_number, plate_score, frigate_event_id, frigate_review_id, formatted_start_time, watched_plate)
          
     if plate_number or config['frigate'].get('always_save_snapshot', False):
         save_image(
