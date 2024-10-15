@@ -1,0 +1,79 @@
+alias: Frigate Plate Recognizer - Pagalma kamera - plate detected
+description: ""
+triggers:
+  - topic: frigate/plate_recognizer
+    id: frigate-event
+    variables:
+      plate: "{{ trigger.payload_json[\"plate_number\"] }}"
+      event_id: "{{ trigger.payload_json[\"frigate_event_id\"] }}"
+      camera_name: "{{ trigger.payload_json[\"camera_name\"] }}"
+      review_id: "{{ trigger.payload_json[\"frigate_review_id\"] }}"
+    trigger: mqtt
+conditions: []
+actions:
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.payload_json.plate_number == 'LP1234' }}" # LP1234 - Watched licence plate number, change accordingly
+            enabled: true
+        sequence:
+          - action: notify.mobile_app_martinss_iphone # Change accordingly
+            data:
+              title: Driveway camera
+              message: Detected VW Passat LP-1234
+              data:
+                url: https://FRIGATE_URL/review?id={{ review_id }}
+                attachment:
+                  url: >-
+                    https://FRIGATE_URL/api/events/{{ event_id }}/preview.gif
+                actions:
+                  - action: URI
+                    title: Video
+                    uri: /api/frigate/notifications/{{ event_id }}/clip.mp4
+                  - action: URI
+                    title: Attēls
+                    uri: /api/frigate/notifications/{{ event_id }}/snapshot.jpg
+                tag: "{{ event_id }}"
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.payload_json.plate_number == 'undetected' }}" # When no Licence plate has been detected, but 'car' object spotted, we still want notifications
+        sequence:
+          - action: notify.mobile_app_martinss_iphone # Change accordingly
+            data:
+              title: Driveway camera
+              message: Unrecognized car detected
+              data:
+                url: https://FRIGATE_URL/review?id={{ review_id }}
+                attachment:
+                  url: >-
+                    https://FRIGATE_URL/api/events/{{ event_id
+                    }}/preview.gif
+                actions:
+                  - action: URI
+                    title: Video
+                    uri: /api/frigate/notifications/{{ event_id }}/clip.mp4
+                  - action: URI
+                    title: Attēls
+                    uri: /api/frigate/notifications/{{ event_id }}/snapshot.jpg
+                tag: "{{ event_id }}"
+    default:
+      - data:
+          title: Driveway camera
+          message: Unrecognized car detected ({{ trigger.payload_json.plate_number }}) # When licence plate has been detected, but it is not a watched plate, add Licence plate number to notification
+          data:
+            url: https://FRIGATE_URL/review?id={{ review_id }}
+            attachment:
+              url: >-
+                https://FRIGATE_URL/api/events/{{ event_id
+                }}/preview.gif
+              actions:
+                - action: URI
+                  title: Video
+                  uri: /api/frigate/notifications/{{ event_id }}/clip.mp4
+                - action: URI
+                  title: Attēls
+                  uri: /api/frigate/notifications/{{ event_id }}/snapshot.jpg
+              tag: "{{ event_id }}"
+        action: notify.mobile_app_martinss_iphone # Change accordingly
+    enabled: true
+mode: single
