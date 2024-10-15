@@ -20,6 +20,7 @@ import difflib
 mqtt_client = None
 config = None
 first_message = True
+response = None
 _LOGGER = None
 
 VERSION = '2.0.0'
@@ -58,6 +59,7 @@ def plate_recognizer(image):
     api_url = config['plate_recognizer'].get('api_url') or PLATE_RECOGIZER_BASE_URL
     token = config['plate_recognizer']['token']
 
+    global response
     response = requests.post(
         api_url,
         data=dict(regions=config['plate_recognizer']['regions']),
@@ -74,6 +76,7 @@ def plate_recognizer(image):
 
     if len(response['results']) == 0:
         _LOGGER.debug(f"No plates found")
+
         return None, None, None, None
 
     plate_number = response['results'][0].get('plate')
@@ -172,6 +175,20 @@ def send_mqtt_message(plate_number, plate_score, frigate_event_id, frigate_revie
     topic = f'{main_topic}/{return_topic}'
 
     mqtt_client.publish(topic, json.dumps(message))
+
+def if_no_plate_found(frigate_event_id, frigate_review_id):
+    global response
+    if len(response['results']) == 0:
+        message = {
+            'plate_number': 'undetected',
+            'frigate_event_id': frigate_event_id,
+            'frigate_review_id': frigate_review_id,
+        }
+        _LOGGER.debug(f"Sending empty MQTT message: {message}")
+        main_topic = config['frigate']['main_topic']
+        return_topic = config['frigate']['return_topic']
+        topic = f'{main_topic}/{return_topic}'
+        mqtt_client.publish(topic, json.dumps(message))
 
 def has_common_value(array1, array2):
     return any(value in array2 for value in array1)
@@ -289,6 +306,7 @@ def get_license_plate_attribute(after_data):
     
 def get_final_data(event_url):
     if config['frigate'].get('frigate_plus', False):
+        global response
         response = requests.get(event_url)
         if response.status_code != 200:
             _LOGGER.error(f"Error getting final data: {response.status_code}")
@@ -428,8 +446,8 @@ def on_message(client, userdata, message):
             store_plate_in_db(plate_number, plate_score, frigate_event_id, after_data, formatted_start_time)
 #        set_sublabel(frigate_url, frigate_event_id, watched_plate if watched_plate else plate_number, plate_score)
 
-        send_mqtt_message(plate_number, plate_score, frigate_event_id, frigate_review_id, formatted_start_time, watched_plate)
-         
+        send_mqtt_message(plate_number, plate_score, frigate_event_id, frigate_review_id, formatted_start_time, watched_plate)       
+
     if plate_number or config['frigate'].get('always_save_snapshot', False):
         save_image(
             config=config,
@@ -438,6 +456,9 @@ def on_message(client, userdata, message):
             frigate_event_id=frigate_event_id,
             plate_number=watched_plate if watched_plate else plate_number
         )
+
+    if if_no_plate_found(frigate_event_id, frigate_review_id):
+        return  
 
 def setup_db():
     conn = sqlite3.connect(DB_PATH)
